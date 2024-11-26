@@ -6,15 +6,15 @@ from transformers import pipeline
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
-# 加载 Hugging Face 预训练情感分类模型
+# Load Hugging Face sentimet analyzer
 sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
 
-# 加载 JSON 数据
+# load json data
 json_path = "../../data/review data/review_sentiment.json"
 with open(json_path, "r", encoding="utf-8") as f:
     data = json.load(f)
 
-# 定义价格相关关键词
+# define keywords related to price
 price_keywords = [
     "expensive", "too expensive", "very expensive", "not expensive",
     "really expensive", "cheap", "affordable", "overpriced", "pricey",
@@ -22,7 +22,6 @@ price_keywords = [
 ]
 price_keywords_regex = re.compile(r'\b(?:' + '|'.join(re.escape(keyword) for keyword in price_keywords) + r')\b', re.IGNORECASE)
 
-# 定义处理单个房源的函数
 def process_property(listing):
     property_features = []
     for property_id, comments in listing.items():
@@ -44,17 +43,15 @@ def process_property(listing):
                     reviews.append(comment)
                     review_lengths.append(len(text))
 
-                    # 统计价格关键词提及次数
+                    # Get price keyword
                     matches = price_keywords_regex.findall(text)
                     price_mentions += len(matches)
 
-                    # 提取价格上下文并进行情感分析
+                    # Sentiment analysis for price
                     for match in matches:
                         match_start = text.lower().find(match.lower())
                         context = text[max(0, match_start - 30):min(len(text), match_start + 30)]
                         price_contexts.append(context)
-
-                        # 情感分类
                         sentiment = sentiment_analyzer(context)
                         if sentiment[0]["label"] == "NEGATIVE":
                             price_sentiments["expensive"] += 1
@@ -103,7 +100,7 @@ def process_property(listing):
             price_sentiments = {"expensive": None, "reasonable": None, "cheap": None}
             price_contexts = None
 
-        # 保存特征
+        # save features
         property_features.append({
             "property_id": property_id,
             "total_reviews": total_reviews,
@@ -122,42 +119,38 @@ def process_property(listing):
         })
     return property_features
 
-# 使用多线程处理房源
 property_features = []
 with ThreadPoolExecutor(max_workers=16) as executor:
     futures = {executor.submit(process_property, listing): listing for listing in data}
     for future in tqdm(as_completed(futures), total=len(futures), desc="Processing listings with multithreading"):
         property_features.extend(future.result())
 
-# 转换为 DataFrame
 df = pd.DataFrame(property_features)
 
-# 清理数据逻辑
 def clean_data(df):
-    # 分解 price_sentiments 列为独立列
+    # decompose price_sentiments
     df['price_sentiments_expensive'] = df['price_sentiments'].apply(lambda x: x['expensive'] if isinstance(x, dict) else 0)
     df['price_sentiments_reasonable'] = df['price_sentiments'].apply(lambda x: x['reasonable'] if isinstance(x, dict) else 0)
     df['price_sentiments_cheap'] = df['price_sentiments'].apply(lambda x: x['cheap'] if isinstance(x, dict) else 0)
 
-    # 将 price_contexts 替换为其长度
+    # replace price_contexts with its length
     df['price_contexts'] = df['price_contexts'].apply(lambda x: len(x) if isinstance(x, list) else 0)
 
-    # 删除原始 price_sentiments 列
+    # delete the original price_sentiments column
     df = df.drop(columns=['price_sentiments'])
 
-    # 确保所有数据类型均为 int 或 float
+    # make sure all data are int or float
     for column in df.columns:
         if df[column].dtype == 'object':
-            # 对于无法转换为数值的列，用 0 填充空值
+            # fillna(0)
             df[column] = df[column].fillna(0)
             df[column] = df[column].apply(lambda x: float(x) if isinstance(x, (int, float)) else 0)
 
     return df
 
-# 清理数据
 df_cleaned = clean_data(df)
 
-# 保存清理后的数据
+# save cleaned data
 cleaned_file_path = "../../data/important data/review_feature_train_cleaned.csv"
 df_cleaned.to_csv(cleaned_file_path, index=False)
 
